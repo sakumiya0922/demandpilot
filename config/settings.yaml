@@ -3,3 +3,10 @@ forecast_horizon_days: 7
 history_days: 90
 feature_windows: [7, 14, 28]
 random_seed: 42
+data:
+  training_start: "2010-12-01"
+  training_end: "2011-08-31"
+  observation_start: "2010-12-01"
+  observation_end: "2011-12-08"
+  min_active_days: 90
+  min_history_days: 180
