@@ -2,6 +2,8 @@
 
 実行日: 2026-10-11（日本時間）。アクセス: http://localhost:8501 。
 
+初回実行は[README](../README.md#初回実行)、独立環境からの最終確認は[再現手順](reproducibility.md)を参照。共有用の画面画像は[PC](images/dashboard-desktop.png)・[スマートフォン](images/dashboard-mobile.png)。
+
 ## 実装
 
 商品コードと商品名を表示する30商品の選択、直近7日実績、LightGBM・ベースラインの翌7日合計予測、過去90日の日次販売実績グラフを実装。

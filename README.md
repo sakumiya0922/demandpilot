@@ -1,184 +1,193 @@
 # DemandPilot
 
-需要予測・在庫補充支援システムの転職ポートフォリオ。小売企業の在庫・発注担当者を想定しています。
+小売企業の在庫・発注担当者向けの **需要予測・在庫補充支援システム**です。公開取引データの取得から、SQLによる保存、機械学習の時系列評価、Webアプリでの推論・補充シミュレーションまでをローカルで再現できます。
 
-現在は段階4（Streamlit Webアプリ）です。商品選択、過去90日の実績、保存モデルからの7日合計予測、精度比較、簡易補充シミュレーションを利用できます。
+## 解決したい業務課題
 
-実機確認済み: Python 3.12.9 / Linux aarch64、PostgreSQL 16.8のスキーマ初期化・接続、LightGBM等のインポート、StreamlitのHTTPヘルスチェックおよびAppTestによるDB接続表示。これは実行基盤の確認であり、モデル評価ではありません。
+商品ごとの直近の販売状況と翌週の販売見込みを同じ画面で確認し、現在庫・安全在庫の仮定を変えながら補充数を検討することを想定しています。予測精度をベースラインと比較して表示し、機械学習の予測が業務判断に使えるかを判断する材料を提供します。
 
-## ローカル実行
+実際の在庫データはありません。補充数は簡易計算で、本格的な在庫最適化や自動発注ではありません。
 
-Docker Desktopを起動してください。Mac側のPythonは使用せず、Python 3.12をコンテナ内で実行します。Apple Siliconではネイティブarm64イメージを使用します。
+## 画面
 
-```sh
-cp .env.example .env
-docker compose build
-docker compose up -d db
-docker compose run --rm pipeline init-db
-docker compose run --rm pipeline check-db
-docker compose up -d app
-```
+![DemandPilotのダッシュボード](docs/images/dashboard-desktop.png)
 
-予測画面を使用する前に、以下のデータ準備と学習も実行してください。
+[スマートフォン幅の表示](docs/images/dashboard-mobile.png)
 
-```sh
-docker compose run --rm pipeline prepare-data
-docker compose run --rm pipeline train
-docker compose up -d app
-```
+- 30商品を商品コード・商品名で選択。
+- 過去90日の日次販売数量と直近7日合計を表示。
+- 保存済みLightGBM・直近7日合計ベースラインで、翌7日間の合計数量を表示。日別予測は作りません。
+- 全体／商品別のテストMAE・WAPEを切り替え、モデルが下回った場合も表示。
+- 仮定の現在庫・安全在庫と使用モデルを変更して、補充数を再計算。
 
-http://localhost:8501 を開くと、ダッシュボードが表示されます。Web画面からの再学習・発注操作はありません。
+データ最終基準日は **2011年12月8日**、未来予測は **12月9〜15日の合計**です。現在の日付に対する予測ではありません。Web画面から学習や発注は行いません。
 
-```sh
-docker compose ps
-docker compose logs app
-docker compose down
-```
-
-`down`ではDBの名前付きボリュームを保持します。`.env`はローカル開発用でGitに含めません。公開環境では認証情報を別途管理してください。PostgreSQLはホストにポートを公開していません。
-
-コード変更後は`docker compose build`でイメージを更新し、`docker compose up -d app`で反映します。
-
-直接依存は`pyproject.toml`、間接依存を含む解決済みバージョンは`requirements.lock`に固定しています。ロックはPython 3.12 / Linux arm64で生成しています。
-
-## 構成
+## システム構成
 
 ```mermaid
 flowchart LR
-    UCI[UCI Online Retail] --> ETL[Python: 取得・前処理]
-    ETL --> DB[(PostgreSQL)]
-    DB --> ML[特徴量・学習・時系列評価]
-    ML --> Files[モデル・評価成果物]
-    DB --> UI[Streamlit]
-    Files --> UI
-    UI --> Sim[簡易補充シミュレーション]
+    UCI[UCI Online Retail ZIP・Excel] --> Download[取得・元データ保存]
+    Download --> Clean[品質確認・前処理・商品選定]
+    Clean --> DB[(PostgreSQL<br/>商品・取引・日次販売)]
+    DB --> Features[時点整合性を保つ特徴量]
+    Features --> Train[時系列分割・検証によるモデル選択]
+    Train --> Eval[評価用モデル・テスト指標]
+    Train --> Final[全期間の完全ラベルで再学習]
+    Final --> Model[最終モデル・学習条件]
+    DB --> App[Streamlit]
+    Model --> App
+    Eval --> App
+    App --> Simulation[仮定在庫による簡易補充計算]
 ```
 
-この図は完成予定の構成です。`src/demandpilot`に処理を置き、`app`には画面を置きます。`sql`はDB定義、`config`は処理設定、`data/raw`と`artifacts`はGit対象外のデータ・成果物です。
+Pythonの処理とUIを分離し、PostgreSQLとアプリをDocker Composeで動かします。DBポートはホストへ公開せず、アプリはlocalhostへ公開します。
 
-## データ準備（段階2）
+## 技術スタック
 
-```sh
-docker compose build
-docker compose run --rm pipeline prepare-data
-docker compose run --rm --entrypoint pytest pipeline -q
-docker compose run --rm --entrypoint python pipeline scripts/verify_snapshot.py before
-docker compose run --rm pipeline prepare-data
-docker compose run --rm --entrypoint python pipeline scripts/verify_snapshot.py after
-```
+| 用途 | 技術 |
+| --- | --- |
+| 実行環境 | Python 3.12.9、Docker、Docker Compose |
+| データ処理 | pandas 2.2.3、NumPy、openpyxl |
+| DB・SQL | PostgreSQL 16.8、psycopg 3.2.5、PostgreSQL COPY |
+| モデル | LightGBM 4.6.0、scikit-learn 1.6.1 |
+| Webアプリ | Streamlit 1.42.2 |
+| 検証 | pytest、Streamlit AppTest、保存モデル照合スクリプト |
 
-元のZIPとExcelを`data/raw`に保存し、取得済みZIPは再利用します。Excelは毎回ZIPから復元します。元ExcelのSHA-256、設定、欠損数、除外理由別件数、選定商品、DB登録件数を`artifacts/data_quality.json`に保存します。元データと生成レポートはGit対象外です。
+依存は`pyproject.toml`と`requirements.lock`に固定しています。実機確認はMac Apple Silicon / Linux aarch64です。Mac側のPythonは不要です。
 
-処理は`src/demandpilot/data`の`download`、`clean`、`aggregate`、`storage`、`pipeline`に分離しています。テストは`tests`にあり、DBテストは独立した一時スキーマを使います。
+## 初回実行
 
-### 前処理ルール
-
-以下の順序で最初に該当した理由を採用します。JSONの`excluded_counts_exclusive`は重複せず合計が総除外数と一致します。`condition_counts_overlapping`は各条件に該当する件数で、同じ行が複数条件に該当する場合があります。
-
-1. 伝票番号欠損、取引日時不正、商品コード欠損。
-2. 数量が非数値・非有限・小数・DB整数範囲外、単価が非数値・非有限・DB価格範囲外。
-3. C始まりのキャンセル伝票（大小文字を区別しない）。
-4. 負の数量（返品・調整）、数量0、単価0以下。
-5. 商品コードが数字5桁＋英字0〜2桁に一致しない行（送料・手数料等）。コードは空白除去・大文字化。
-6. 観測期間外の行。固定観測期間は2010-12-01〜2011-12-08。終了日途中の影響を避けるため2011-12-09を除外。
-
-商品説明・顧客ID・国の欠損は販売数量集計に不要なため保持します。商品名は学習期間内の最頻説明を使い、欠損時は商品コードを表示名にします。完全一致する行も元取引の意味を確認できないため削除せず、件数のみ記録します。元Excelの行番号を取引主キーにします。
-
-大口取引は削除・クリップしません。数量・単価の分位点と最大値を記録し、卸売を含む販売実績として保持します。商品コードの形式判定には、特殊な商品コードを除外し得る制約があります。
-
-### 商品選定・集計・DB保存
-
-学習期間は2010-12-01〜2011-08-31に固定。学習期間内の販売日数90日以上かつ最初から最後の販売まで180日以上の商品を、販売日数・販売数量の降順、商品コードの昇順で30商品選定します。条件を満たす商品数が不足した場合は処理を停止します。将来の売上・商品名は選定に使いません。後の時系列評価でもこの学習期間の境界を使用してください。
-
-- `products`: 選定30商品の商品コード・学習期間由来の商品名。
-- `transactions`: 全商品の前処理後の有効取引。顧客IDはDBに保存しません。
-- `daily_sales`: 選定商品の全観測期間について商品×日付の格子を作り、販売のない日は0。DBの取引は地域を限定せず全ての国を含みます。
-
-この3テーブルはパイプライン専用のスナップショットです。再実行時は同一トランザクション内で置き換え、選定ルール変更時も古い商品や行を残しません。同時書き込みをロックし、エラー時は全体をロールバックします。CSV経由ではなくPostgreSQL COPYで登録し、件数と日次数量合計を検証します。
-
-実測結果は[段階2の検証記録](docs/data_preparation.md)に記載しています。元データ541,909件、有効取引526,107件、30商品・11,190日次行。実データの再実行で3テーブルの全行内容が一致し、pytestは23件すべて成功しました。
-
-## ML設計
-
-学習・推論を実行するには、先に段階2のデータ準備を完了してください。
+Docker Desktopを起動し、このリポジトリをcloneまたはZIPで取得してください。以下はプロジェクト直下で順番に実行します。初回はDockerイメージ・公開データのダウンロードにインターネット接続が必要です。
 
 ```sh
+cd demandpilot
+
+# 既存の.envを上書きせず、ローカル開発用の設定を用意
+if [ ! -f .env ]; then cp .env.example .env; fi
+
 docker compose build
+docker compose up -d db
+docker compose run --rm pipeline init-db
+
+# 元データ取得・品質確認・日次集計・DB保存
+docker compose run --rm pipeline prepare-data
+
+# 検証だけでモデル選択 → テスト評価 → 最終学習 → 未来予測保存
 docker compose run --rm pipeline train
+
+# 学習せず、保存済みモデルから予測を再生成
 docker compose run --rm pipeline predict
+
+# 実データとモデルを準備した後に全テストを実行
+docker compose run --rm --entrypoint pytest pipeline -q
+
+docker compose up -d app
+```
+
+**アクセス: http://localhost:8501**
+
+商品20724を選ぶと、直近7日749個、LightGBM予測552.7個、ベースライン749個が表示されます。現在庫300個・安全在庫100個・LightGBMを選択すると補充数は353個です。表示は丸めていますが、補充計算には未丸めの予測値を使います。
+
+`.env.example`のパスワードはローカル開発用サンプルです。実際の認証情報をGitへ保存しないでください。ポート8501が使用中の場合は`.env`の`STREAMLIT_PORT`を変更し、そのポートでアクセスします。モデル・データを準備する前にアプリを起動すると、未準備の案内が表示されます。
+
+### 再起動・状態確認
+
+```sh
+docker compose up -d app
+docker compose ps
+docker compose logs --tail=100 app
+docker compose run --rm pipeline check-db
+```
+
+停止は`docker compose down`で行えます。名前付きDBボリュームとホストの`data`・`artifacts`は保持されます。ボリューム削除やデータディレクトリ削除は通常の実行手順に含めません。
+
+コードを変えた場合は`docker compose build`後に`docker compose up -d app`。成果物を更新した場合は最大60秒のキャッシュ待ち、または`docker compose restart app`で反映します。
+
+**既存データがある場合:** `prepare-data`はパイプライン専用の3テーブルをトランザクション内で置き換えます。`train`は同名の学習成果物を更新します。既存スナップショットを保持して検証したい場合は、[独立環境での手順](docs/reproducibility.md)を使ってください。
+
+## データ処理
+
+出典は[UCI Online Retail](https://archive.ics.uci.edu/dataset/352/online%2Bretail)。元データ541,909件から、キャンセル・負の数量・非正の単価・商品以外のコード形式・観測期間外の行を除外し、有効取引526,107件を保存します。理由別件数は重複なしで記録し、各条件の該当件数も別に記録します。
+
+学習期間2010-12-01〜2011-08-31だけを使い、販売日数90日以上・履歴180日以上の商品から30商品を選定。将来の販売・商品名を選定に使いません。2010-12-01〜2011-12-08の373日間を0補完し、30商品×373日の11,190行を保存します。
+
+商品説明・顧客IDの欠損は集計に不要なため保持し、顧客IDはDBへ保存しません。完全一致行と大口取引は意味を確認できないため一律削除せず、統計値を記録します。
+
+詳細: [品質確認・除外ルール・実測登録件数](docs/data_preparation.md)
+
+## モデルと実測評価
+
+基準日tの終了時点の直近7・14・28日販売合計、平均、標本標準偏差、月・曜日・日、カテゴリ商品IDから、翌7日合計を予測します。複数商品で一つのLightGBM L1回帰モデルを学習し、検証MAEと早期終了で3候補から選択します。
+
+| 区分 | 使用した予測基準日 | 商品×基準日 |
+| --- | --- | ---: |
+| 学習 | 2010-12-28〜2011-08-24、毎日 | 7,200 |
+| 検証 | 2011-09-01〜2011-10-20、7日間隔 | 240 |
+| テスト | 2011-11-01〜2011-11-29、7日間隔 | 150 |
+
+区間境界をまたぐ7日ラベルは除外し、検証・テストの予測対象期間は商品内で重複しません。学習ラベルは重複します。テストはチューニングに使用しません。
+
+| テスト指標 | LightGBM | 直近7日合計ベースライン |
+| --- | ---: | ---: |
+| MAE（7日間の個数） | 274.01 | 206.67 |
+| WAPE | 57.41% | 43.30% |
+
+**LightGBMはテストでベースラインを下回りました。** 商品別では11商品で改善、19商品で悪化。検証では改善した一方、テストで販売水準が変わる商品への追随不足が示唆されます。過学習も否定できません。この結果を見た追加チューニングは行っていません。
+
+最終モデルは固定した設定・139回で、実績7日分が揃う10,170行を再学習します。以前の検証・テスト期間を含むため、そのモデルの訓練結果をテスト精度とは呼びません。12月9〜15日の完全な実績はなく、未来予測自体の精度は未評価です。
+
+詳細: [候補・期間・全30商品のMAE/WAPE・考察](docs/evaluation.md)
+
+## 補充計算と制約
+
+```text
+推奨補充数 = max(0, ceil(予測販売数量 + 安全在庫 − 現在庫))
+```
+
+現在庫と安全在庫は仮定値です。欠品による潜在需要、発注リードタイム、発注残、ロット、欠品・保管コストは考慮しません。販売なしの日を0とみなしますが、欠品・休業・未収録は区別できません。
+
+詳細: [データ・モデル・補充計算の制約と残課題](docs/limitations.md)
+
+## テスト・再現性確認
+
+先にデータ準備と学習を行ってください。実データ未準備ではUI統合テストがskipします。
+
+```sh
+docker compose run --rm --entrypoint pytest pipeline -q
 docker compose run --rm --entrypoint python pipeline scripts/verify_model.py
 ```
 
-`train`は評価用モデルを学習して時系列評価を保存した後、最終モデルを再学習し、30商品の未来予測を保存します。`predict`は学習をせず保存済みの最終モデルから同じ予測を再生成します。DBから既存30商品を読み、再選定はしません。
+全53テストは、前処理、0補完、商品選定の時点整合性、特徴量とラベル、時系列分割、MAE/WAPE、保存モデル推論、DB保存の冪等性・ロールバック、全30商品の画面切り替え、補充入力を検証します。Streamlit内部のAltair非推奨API警告1件が出ますが、表示とテストは成功しています。
 
-特徴量計算は`features.py`、学習は`modeling/train.py`、推論は`modeling/predict.py`、評価・分割は`modeling/evaluate.py`に分離しています。
+実データ再処理の前後比較、既存DBを保持する初期状態からの検証、ブラウザ確認は[再現手順・最終検証](docs/reproducibility.md)を参照してください。
 
-- 日付`t`の終了時点で`t+1〜t+7`の販売数量合計を予測。
-- 直近7・14・28日の実績、移動平均・変動、月・曜日・商品IDを使用。
-- 対象約30商品は学習期間の履歴から選定。
-- 学習・検証・テストを時系列順に分割し、ラベル期間が次の区間へ入る行を除外。
-- 同じテスト行でLightGBMと直近7日合計のベースラインをMAE・WAPEで比較。
-- モデルがベースラインを下回る場合もそのまま表示。実績合計が0のWAPEは算出不可。
-- 補充数は`max(0, ceil(予測数量 + 安全在庫 − 現在庫))`。
+## フォルダ構成
 
-### 分割とモデル選択
-
-学習区間は2010-12-01〜2011-08-31、検証区間は2011-09-01〜2011-10-31、テスト区間は2011-11-01〜2011-12-08。特徴量には当日`t`を含む直近7・14・28日の合計・平均・標本標準偏差、基準日の月・曜日・日、カテゴリ商品IDを使用します。28日の履歴がない行と、未来7日分の実績が揃わない行は学習・評価に使いません。
-
-各区間内に予測基準日と7日間のラベルが収まる行だけを使います。検証は9月1日、テストは11月1日から7日ごとの基準日です。区間の端には未評価の日が残ります。検証・テストの予測対象期間は重複しません。学習はサンプル数を確保するため毎日の基準日を使い、ラベルは重複します。各評価行は商品×予測基準日です。
-
-共通LightGBM回帰モデルを3候補から検証MAEで選択し、検証データで早期終了します。目的関数はL1、予測は0以上にクリップ。同じ行でベースラインと比較します。WAPEは全行の絶対誤差合計÷実績合計で、JSON・CSVでは比率、文書では%表示です。商品別WAPEの単純平均を全体WAPEにはしません。
-
-テスト評価後、利用可能な全ての完全ラベルを持つ行で、選択済みのパラメータと反復回数を使い最終モデルを学習します。この再学習には以前の検証・テスト期間も含まれますが、再学習モデルの精度をテスト精度として表示しません。
-
-### 保存成果物
-
-`artifacts/ml`（Git対象外）に以下を保存します。
-
-- `evaluation_model.txt`: テスト評価に使った学習期間のみのモデル。
-- `final_model.txt`: 未来推論用に全期間の完全ラベルで再学習したモデル。
-- `evaluation.json`: 候補別検証指標、分割、全体・商品別MAE/WAPE。
-- `train_predictions.csv`、`validation_predictions.csv`、`test_predictions.csv`: 実績・モデル・ベースラインの評価行。
-- `product_metrics.csv`: 商品別テスト指標と商品名。
-- `training_conditions.json`: 学習設定、特徴量、商品カテゴリ、採用パラメータ、データハッシュ、パッケージバージョン。
-- `forecast.csv`: 2011-12-08基準、2011-12-09〜2011-12-15の合計販売数量予測。実績が未観測であることを`actual_available=False`で明示。
-- `feature_importance.csv`: 最終モデルのgain重要度。
-
-精度と制約の詳細は[モデル評価記録](docs/evaluation.md)に記載しています。テストでLightGBMはMAE274.01・WAPE57.41%、ベースラインはMAE206.67・WAPE43.30%となり、LightGBMが下回りました。商品別では11/30商品で改善。pytestは38件すべて成功し、保存モデルと指標の再計算・照合も成功しています。将来予測には検証できる実績がないため、この予測自体のMAE/WAPEは計算しません。12月9日の部分的な元取引も集計・学習には使用しません。
-
-## データと制約
-
-[UCI Online Retail](https://archive.ics.uci.edu/dataset/352/online%2Bretail)を使用。541,909件、2010年12月1日〜2011年12月9日の取引。キャンセル・返品・不正な数量や価格・商品以外のコードを確認し、除外理由と件数を記録します。大口取引を一律に異常値としません。
-
-出典: Chen, D. (2015). Online Retail. UCI Machine Learning Repository. DOI: 10.24432/C5BW33. ライセンス: CC BY 4.0。
-
-現在庫・欠品・発注残・リードタイムはデータにありません。予測対象は観測された販売数量であり、潜在需要ではありません。最終日は不完全な集計を避けるため除外しています。今後の予測画面は過去データ上の基準日を表示します。
-
-## 開発段階
-
-1. Docker・PostgreSQL・Streamlitの実行基盤。
-2. データ取得・品質確認・前処理・商品選定・日次集計。
-3. 漏洩を防ぐ特徴量・時系列評価・モデル保存。
-4. 過去90日の実績・予測・精度比較・補充画面。
-5. 検証と再現手順・実測評価の文書化。
-
-GCP移行はローカルMVPの後に検討します。DBアクセスと業務ロジックを分離し、BigQuery・Cloud Runへの移行に備えます。
-
-## ダッシュボード（段階4）
-
-- 商品コード＋名称から30商品を選択。上部に直近7日実績・LightGBM予測・ベースライン予測。
-- PostgreSQLから2011-09-10〜2011-12-08の90日間を読み、日次販売の折れ線グラフを表示。
-- `final_model.txt`を読み、特徴量から実際に推論。`forecast.csv`を画面の予測の代用にはしません。翌7日間は合計値だけを表示し、日別の予測グラフは作りません。
-- `evaluation.json`のテストMAE/WAPEを全体・選択商品で切り替え。全体でLightGBMが下回った事実を商品別表示でも明示。
-- 現在庫・安全在庫は仮定値。予測モデルを選び、`max(0, ceil(予測 + 安全在庫 − 現在庫))`を入力変更時に再計算。発注リードタイム・発注残・ロット等は対象外。
-- データは読み取り専用。DBアクセス・推論は`dashboard.py`、補充計算は`replenishment.py`、表示は`app/streamlit_app.py`。
-- 読み込み結果は60秒キャッシュ。モデル・成果物を更新した場合は最大60秒後、または`docker compose restart app`で反映。画面から成果物や評価は書き換えません。
-- ライト基調のカード、青い実績グラフ、狭い画面では縦に積むレイアウト。
-
-```sh
-docker compose run --rm --entrypoint pytest pipeline -q
+```text
+app/                       Streamlit画面
+src/demandpilot/
+  data/                    取得・前処理・選定・日次集計・DB保存
+  features.py              時点整合性を保つ特徴量と目的変数
+  modeling/                学習・時系列評価・独立した推論
+  dashboard.py             読み取り専用の画面データ取得
+  replenishment.py         簡易補充計算
+config/settings.yaml       期間・商品数・モデル設定
+sql/schema.sql             商品・取引・日次販売のDB定義
+tests/                     単体・DB・UI統合テスト
+scripts/                   データ・モデル・ブラウザ検証
+docs/                      実測結果・考察・再現手順・画面画像
+data/raw/                  元ZIP・Excel（Git対象外）
+artifacts/                 品質レポート・モデル・評価・予測（Git対象外）
 ```
 
-UI統合テストは実データ・学習済みモデルを使用するため、先に`prepare-data`と`train`を実行してください。未準備の場合は該当テストをskipします。
+`artifacts/ml`には評価用／最終モデル、評価JSON、商品別指標CSV、各区間の予測CSV、未来予測CSV、学習条件JSON、特徴量重要度CSVを保存します。初回実行で生成するため、GitHubから取得した直後には存在しません。
 
-実データで53件のテストが成功し、30商品の切り替えと補充数の再計算を確認しました。Chromeで1280px・390px幅の表示と横はみ出しなしも確認済みです。詳しくは[画面の検証記録](docs/dashboard.md)を参照してください。
+## ポートフォリオで示す実装
+
+データ品質を監査できるETL、SQL・DB保存、漏洩を防ぐ時系列評価、モデルの保存と独立した推論、業務判断を支援するUI、Dockerでの再現と自動テストを一つのシステムにまとめました。精度の改善を保証するプロジェクトではなく、ベースラインとの比較を含めて結果と制約を説明する構成です。
+
+ローカルMVPが対象です。GCPへのデプロイ、実在庫連携、運用監視は未実装です。GitHub公開・remote設定は別途行います。
+
+## データ出典
+
+Chen, D. (2015). Online Retail [Dataset]. UCI Machine Learning Repository. DOI: [10.24432/C5BW33](https://doi.org/10.24432/C5BW33)。データのライセンスはCC BY 4.0です。元データと生成モデルはリポジトリに含めず、取得・学習コードと実測結果を公開できる構成にしています。
