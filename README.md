@@ -2,7 +2,7 @@
 
 需要予測・在庫補充支援システムの転職ポートフォリオ。小売企業の在庫・発注担当者を想定しています。
 
-現在は段階3（需要予測モデルの学習・時系列評価）です。Streamlitは実行基盤の確認画面で、本格的な予測画面は段階4で実装します。
+現在は段階4（Streamlit Webアプリ）です。商品選択、過去90日の実績、保存モデルからの7日合計予測、精度比較、簡易補充シミュレーションを利用できます。
 
 実機確認済み: Python 3.12.9 / Linux aarch64、PostgreSQL 16.8のスキーマ初期化・接続、LightGBM等のインポート、StreamlitのHTTPヘルスチェックおよびAppTestによるDB接続表示。これは実行基盤の確認であり、モデル評価ではありません。
 
@@ -19,7 +19,15 @@ docker compose run --rm pipeline check-db
 docker compose up -d app
 ```
 
-http://localhost:8501 を開くと、実行基盤の確認画面が表示されます。
+予測画面を使用する前に、以下のデータ準備と学習も実行してください。
+
+```sh
+docker compose run --rm pipeline prepare-data
+docker compose run --rm pipeline train
+docker compose up -d app
+```
+
+http://localhost:8501 を開くと、ダッシュボードが表示されます。Web画面からの再学習・発注操作はありません。
 
 ```sh
 docker compose ps
@@ -155,3 +163,22 @@ docker compose run --rm --entrypoint python pipeline scripts/verify_model.py
 5. 検証と再現手順・実測評価の文書化。
 
 GCP移行はローカルMVPの後に検討します。DBアクセスと業務ロジックを分離し、BigQuery・Cloud Runへの移行に備えます。
+
+## ダッシュボード（段階4）
+
+- 商品コード＋名称から30商品を選択。上部に直近7日実績・LightGBM予測・ベースライン予測。
+- PostgreSQLから2011-09-10〜2011-12-08の90日間を読み、日次販売の折れ線グラフを表示。
+- `final_model.txt`を読み、特徴量から実際に推論。`forecast.csv`を画面の予測の代用にはしません。翌7日間は合計値だけを表示し、日別の予測グラフは作りません。
+- `evaluation.json`のテストMAE/WAPEを全体・選択商品で切り替え。全体でLightGBMが下回った事実を商品別表示でも明示。
+- 現在庫・安全在庫は仮定値。予測モデルを選び、`max(0, ceil(予測 + 安全在庫 − 現在庫))`を入力変更時に再計算。発注リードタイム・発注残・ロット等は対象外。
+- データは読み取り専用。DBアクセス・推論は`dashboard.py`、補充計算は`replenishment.py`、表示は`app/streamlit_app.py`。
+- 読み込み結果は60秒キャッシュ。モデル・成果物を更新した場合は最大60秒後、または`docker compose restart app`で反映。画面から成果物や評価は書き換えません。
+- ライト基調のカード、青い実績グラフ、狭い画面では縦に積むレイアウト。
+
+```sh
+docker compose run --rm --entrypoint pytest pipeline -q
+```
+
+UI統合テストは実データ・学習済みモデルを使用するため、先に`prepare-data`と`train`を実行してください。未準備の場合は該当テストをskipします。
+
+実データで53件のテストが成功し、30商品の切り替えと補充数の再計算を確認しました。Chromeで1280px・390px幅の表示と横はみ出しなしも確認済みです。詳しくは[画面の検証記録](docs/dashboard.md)を参照してください。
