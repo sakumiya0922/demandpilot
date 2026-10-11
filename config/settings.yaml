@@ -10,3 +10,17 @@ data:
   observation_end: "2011-12-08"
   min_active_days: 90
   min_history_days: 180
+model:
+  validation_start: "2011-09-01"
+  validation_end: "2011-10-31"
+  test_start: "2011-11-01"
+  test_end: "2011-12-08"
+  forecast_origin: "2011-12-08"
+  evaluation_stride_days: 7
+  max_estimators: 400
+  early_stopping_rounds: 40
+  learning_rate: 0.05
+  candidates:
+    - {num_leaves: 15, min_child_samples: 30}
+    - {num_leaves: 31, min_child_samples: 30}
+    - {num_leaves: 15, min_child_samples: 60}
