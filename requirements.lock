@@ -17,6 +17,7 @@ joblib==1.6.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 lightgbm==4.6.0
+mlflow-skinny==3.17.1
 markdown-it-py==4.2.0
 MarkupSafe==3.0.4
 mdurl==0.1.2
