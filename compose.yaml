@@ -2,6 +2,8 @@ x-python: &python
   image: demandpilot:local
   build: .
   environment:
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    MLFLOW_EXPERIMENT_NAME: DemandPilot
     POSTGRES_HOST: db
     POSTGRES_PORT: "5432"
     POSTGRES_DB: ${POSTGRES_DB:-demandpilot}
@@ -13,8 +15,38 @@ x-python: &python
   depends_on:
     db:
       condition: service_healthy
+    mlflow:
+      condition: service_healthy
 
 services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    command:
+      - mlflow
+      - server
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "5000"
+      - --allowed-hosts
+      - "localhost:5000,127.0.0.1:5000,mlflow:5000"
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=4)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   db:
     image: postgres:16.8-bookworm
     environment:
@@ -43,4 +75,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  mlflow_data:
   postgres_data:
