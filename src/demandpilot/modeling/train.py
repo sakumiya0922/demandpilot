@@ -14,6 +14,7 @@ from demandpilot.features import build_features, feature_columns, feature_matrix
 from demandpilot.modeling.baseline import predict_baseline
 from demandpilot.modeling.data import load_daily_sales
 from demandpilot.modeling.evaluate import chronological_split, compare_predictions, metrics, split_summary
+from demandpilot.modeling.mlflow_tracking import log_training_experiment
 from demandpilot.modeling.predict import predict_latest
 
 
@@ -98,5 +99,6 @@ def train_models(settings_path="config/settings.yaml", output_dir=Path("artifact
     importance = pd.DataFrame({"feature": columns, "gain": final_model.booster_.feature_importance(importance_type="gain")})
     importance.to_csv(output_dir / "feature_importance.csv", index=False)
     predict_latest(output_dir)
+    log_training_experiment(evaluation, conditions, output_dir)
     print(json.dumps({"splits": evaluation["splits"], "test": test, "final_training": conditions["final_training"]}, indent=2))
     return evaluation
